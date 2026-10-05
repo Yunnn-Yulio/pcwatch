@@ -1,9 +1,17 @@
 # Changelog
 
+## 0.2.0
+
+- Replace the current C# implementation with a Python standard-library implementation for Windows x64.
+- Use English throughout the application, documentation and launcher instructions.
+- Preserve local resource samples, filtered events, display/power/session notifications and incident markers.
+- Keep rotating logs, bounded retention, persisted event cursors, storage-health reporting and optional per-user startup.
+- Provide Python source packaging, SHA-256 checksums and isolated tests in Windows CI.
+
 ## 0.1.0
 
-- Primera versión pública del registrador local para Windows x64.
-- Muestreo de recursos, eventos filtrados, avisos de pantalla/energía y marcas manuales.
-- Logs rotativos, cursor persistente, parada e inicio automático opcional.
-- Estado visible ante errores de escritura y fecha de la última muestra exitosa.
-- Pruebas aisladas de funcionamiento, recuperación de almacenamiento, privacidad sintética y retención.
+- First public release of the local Windows x64 recorder, written in C#.
+- Resource sampling, filtered events, display/power notifications and manual markers.
+- Rotating logs, persisted cursors, stop controls and optional automatic startup.
+- Visible storage errors and the time of the last successfully saved sample.
+- Isolated runtime, storage-recovery, synthetic-privacy and retention tests.

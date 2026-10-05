@@ -1,53 +1,54 @@
-# Cómo funciona PCWatch
+# How PCWatch works
 
-## Flujo del programa
+## Program flow
 
 ```mermaid
 flowchart LR
-  A[RAM y CPU: APIs de Windows] --> M[MonitorContext: muestreo]
-  B[Discos y memoria GPU: PDH] --> M
-  C[Procesos accesibles] --> M
-  E[EventCollector: eventos y cursor] --> L[LogStore: CSV y JSONL]
-  P[PowerWindow: pantalla y energía] --> L
-  M --> L
-  M --> S[Estado e icono de bandeja]
-  L --> S
+  A[Windows CPU and memory APIs] --> M[Metrics collector]
+  B[PDH disk and GPU memory counters] --> M
+  C[Accessible processes] --> M
+  M --> S[CSV and JSONL storage]
+  E[Filtered events and cursors] --> S
+  W[Tray and power/session notifications] --> S
+  S --> H[Status and last successful sample]
 ```
 
-`Program.Main` procesa las opciones y calcula un identificador a partir de la carpeta de datos. Un mutex impide dos instancias sobre la misma carpeta; una señal de Windows permite que `--stop` detenga solo ese monitor. El inicio automático añade un acceso directo a Inicio del usuario; está separado del arranque normal y se activa únicamente al solicitarlo.
+`app.py` parses options, opens the data folder and coordinates collection. A named Windows mutex prevents two instances from writing into the same folder. A named event lets `--stop` signal that instance. Automatic startup is a separate, explicitly requested operation in `startup.py` that adds a shortcut to the current user's Startup folder through native Windows COM APIs.
 
-El programa tiene un hilo de interfaz para el icono y los avisos de Windows, y un hilo de trabajo para recopilar datos. El muestreo espera entre ciclos y usa prioridad inferior a la normal. No entra en un bucle que ocupe la CPU continuamente.
+The interface receives native Windows messages for the notification-area icon and power/session changes. Collection runs on a worker thread, waiting between passes rather than continually polling. The process uses below-normal priority so measurements are less likely to compete with foreground applications.
 
-## Medidas
+## Measurements
 
-`Native` llama a `GlobalMemoryStatusEx`, `GetPerformanceInfo` y `GetSystemTimes`. Son lecturas del estado del sistema: no inspeccionan la memoria de tus aplicaciones ni el contenido de tus archivos. La CPU se calcula comparando el tiempo ocupado con el tiempo total entre dos muestras. La primera lectura no tiene una muestra anterior y se deja vacía.
+`metrics.py` calls `GlobalMemoryStatusEx`, `GetPerformanceInfo` and `GetSystemTimes` using Python's standard-library `ctypes` module. These APIs provide system statistics; PCWatch does not read the contents of application memory. CPU usage is the change in busy time divided by the change in total time. The first observation has no previous sample, so its CPU value is unavailable.
 
-`Counters` abre una consulta PDH una sola vez y conserva los contadores. Usa nombres ingleses con `PdhAddEnglishCounter` para no depender del idioma del sistema. Las latencias se registran en milisegundos con valores decimales. La memoria gráfica agrega adaptadores; no mide temperatura ni carga de GPU.
+A persistent PDH query avoids opening every counter on each sample. English counter names are added using `PdhAddEnglishCounterW`, independently of the display language of Windows. Disk latency is converted to milliseconds. Dedicated and shared GPU memory are aggregated across the available counters; these values do not describe GPU load or temperature.
 
-El ranking de procesos se toma cada minuto. Guarda nombre, PID, memoria privada/Working Set y diferencia de tiempo de CPU; normaliza CPU al total de procesadores lógicos. Si no tiene permiso para leer un proceso, lo omite y lo indica como cobertura limitada. Las ventanas colgadas se consultan sin guardar su título ni enviar teclas/clics.
+Process collection stores executable name, PID, private memory, working set and the change in CPU time, normalized across the logical processors. Inaccessible processes are excluded and counted as limited coverage. Hung-window detection uses Windows' response-state information without collecting window titles or sending input.
 
-## Eventos y privacidad
+## Events and privacy
 
-`EventCollector` ejecuta consultas filtradas sobre System y Application. Usa proveedor e ID, no únicamente el número de evento: el mismo número puede significar cosas distintas en otro proveedor. Recupera inicialmente dos horas y después persiste el último `RecordId` procesado. Cada pasada tiene un máximo de 100 eventos por registro; si queda historial pendiente, continúa en la siguiente sin saltarlo.
+`events.py` queries the System and Application logs using the Windows Event Log API. Filters match both provider and event ID because the same event ID can have different meanings across providers. The first pass covers a recent two-hour window. Later passes continue from the persisted record ID, with bounded work per log per pass.
 
-El cursor avanza después de guardar el evento. Si la escritura falla, el evento queda pendiente. Si Windows reinicia un registro y los IDs disminuyen, se recupera una ventana reciente. Los errores de acceso se registran como falta de cobertura, sin elevar permisos.
+The cursor advances after an event is saved. If storage fails, the event remains pending for a later attempt. If a log is cleared and record IDs fall, collection returns to a recent window. Access errors indicate missing coverage; the program does not elevate permissions or alter log access controls.
 
-El XML de un evento se procesa en memoria para seleccionar campos. No se conserva XML, mensaje completo ni RawData. Los nombres de ejecutables se reducen a su nombre base. CPER conserva solo severidad, flags, cantidad de secciones y GUIDs de tipos; no payloads, números de serie ni identificadores únicos del registro. Las pruebas de privacidad usan marcadores sintéticos, no credenciales reales.
+Event XML is processed in memory to select allowlisted technical fields. Full messages, XML and raw event payloads are not stored. Executable fields are reduced to their base name. CPER parsing retains header metadata and section-type GUIDs, excluding raw payloads and unique record identifiers. Tests exercise this policy with synthetic markers rather than real credentials.
 
-`PowerWindow` permanece invisible y recibe avisos de pantalla y energía. Esto ayuda a diferenciar “se apagó el monitor” de una suspensión real. Un hueco de muestras conserva su duración con causa desconocida; por sí solo no demuestra un congelamiento.
+Windows display, suspend/resume and session lock/unlock notifications make it possible to distinguish some changes in display state from actual system sleep. A sampling gap is recorded with its duration and unknown cause. It cannot independently prove a freeze or identify a defective component.
 
-## Almacenamiento y fallos
+## Storage and recovery
 
-`LogStore` escribe formatos abiertos, rota por fecha UTC/tamaño y limpia únicamente nombres propios reconocidos dentro de Logs. Rechaza que Logs sea un enlace/junction. La retención tiene un tope de tamaño, para no convertir el diagnóstico en otro problema de disco.
+`storage.py` writes open CSV and JSONL formats. Segments rotate by UTC date and size. Cleanup acts only on recognized PCWatch log filenames inside the selected Logs folder and rejects a Logs folder that is a link or junction. Retention is limited by both age and total size.
 
-El estado conserva la hora de la última muestra escrita con éxito. Un fallo de almacenamiento queda visible aunque sea imposible escribir el aviso en el mismo disco. La interfaz no presenta datos antiguos como si fueran una medición nueva. Los fallos se recuperan por componente: guardar un archivo de actividad no oculta que el archivo de recursos sigue bloqueado.
+Each write is flushed. Atomic replacement is used for status/state files so readers do not normally observe half-written JSON. A storage error remains visible through status when that status file can be written. The last successful resource-sample timestamp is only updated after the sample is stored.
 
-## Por qué C# y no Python
+Component-specific health prevents a successful activity write from hiding a resource-log failure. When storage becomes available again, recording resumes. A shutdown or disk failure can still lose recent records; these mechanisms reduce that risk without promising crash-proof storage.
 
-Python también puede implementar un monitor ligero. Para un registrador de consola, `ctypes` permite llamar a APIs de Windows, y puede consumir poca RAM. El lenguaje por sí solo no determina el consumo: importan las bibliotecas, la frecuencia de consultas y la interfaz.
+## Why Python
 
-C# permitió reunir bandeja, avisos de energía, PDH, WMI y lectura de eventos con bibliotecas de Windows/.NET, sin instalar paquetes. El ejecutable usa .NET Framework disponible en Windows; no necesita distribuir un intérprete Python ni un runtime independiente. Fue una decisión de integración y distribución, no una afirmación de que C# siempre sea más rápido o ligero.
+Python provides a readable implementation with CSV, JSON, XML parsing, threading, command-line handling and native interoperability in its standard library. `ctypes` calls the Windows APIs directly, so the monitor does not need `psutil`, a web framework, a background PowerShell process or any package downloads.
 
-El compromiso es que el programa se limita a Windows x64 y usa .NET Framework, una plataforma estable ligada a Windows. Para una futura aplicación multiplataforma habría que reconsiderar APIs y runtime; para el núcleo de un script personal, Python seguiría siendo razonable.
+The cost is distribution: users need a suitable Python installation, and the ZIP contains source rather than a standalone executable. `pythonw.exe` runs the tray application without a console window. The command-line entry point remains useful for short recordings and tests.
 
-Referencias primarias: [APIs de interoperabilidad de .NET](https://learn.microsoft.com/en-us/dotnet/standard/native-interop/pinvoke), [.NET Framework en Windows](https://learn.microsoft.com/en-us/dotnet/framework/install/versions-and-dependencies), [contadores de Windows](https://learn.microsoft.com/en-us/windows/win32/perfctrs/about-performance-counters), [consultas de eventos](https://learn.microsoft.com/en-us/windows/win32/wes/consuming-events).
+The language alone does not determine overhead. Collection frequency, selected APIs, process count and additional libraries matter. Keeping the monitor local, infrequent and free of third-party dependencies is the main design choice. The APIs used here are Windows-specific, so changing the language does not make the application cross-platform.
+
+Primary API references: [Python ctypes](https://docs.python.org/3/library/ctypes.html), [Windows performance counters](https://learn.microsoft.com/en-us/windows/win32/perfctrs/about-performance-counters), [Windows Event Log consumption](https://learn.microsoft.com/en-us/windows/win32/wes/consuming-events), and [GlobalMemoryStatusEx](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-globalmemorystatusex).

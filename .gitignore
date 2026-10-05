@@ -1,7 +1,15 @@
 artifacts/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.vs/
 bin/
 obj/
-.vs/
 *.exe
 *.pdb
 *.zip

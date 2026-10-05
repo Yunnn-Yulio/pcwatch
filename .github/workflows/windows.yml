@@ -1,4 +1,4 @@
-name: Windows build and tests
+name: Windows Python tests
 
 on:
   push:
@@ -12,19 +12,21 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Compile and package
-        shell: powershell
-        run: .\build.ps1 -Package
-      - name: Privacy and retention fixtures
-        shell: powershell
-        run: .\tests\PrivacyRetention.ps1
-      - name: Isolated runtime smoke test
-        shell: powershell
-        run: .\tests\Smoke.ps1
-      - name: Storage failure and recovery
-        shell: powershell
-        run: .\tests\Health.ps1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x64
+      - name: Compile Python sources
+        run: python -m compileall -q pcwatch PCWatch.pyw tools
+      - name: Run isolated tests
+        run: python -m unittest discover -s tests -v
+      - name: Package Python source
+        run: python tools/package.py
