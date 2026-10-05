@@ -1,0 +1,15 @@
+artifacts/
+bin/
+obj/
+.vs/
+*.exe
+*.pdb
+*.zip
+Logs/
+**/Logs/
+status.json
+event-cursors.json
+last-error.json
+VALIDACION.json
+*-results.json
+*.tmp
