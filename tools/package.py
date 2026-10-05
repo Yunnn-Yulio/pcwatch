@@ -37,6 +37,7 @@ def package_files(root: Path) -> list[Path]:
         root / "CHANGELOG.md",
         root / "PCWatch.pyw",
         root / "docs" / "architecture.md",
+        root / "docs" / "usage.md",
     ]
     paths.extend(root / "pcwatch" / name for name in MODULES)
     paths.extend(root / "scripts" / name for name in LAUNCHERS)

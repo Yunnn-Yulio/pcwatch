@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Rewrite the README around the project's purpose, features, download and first run.
+- Add a separate usage guide for configuration, log files and troubleshooting.
+- Include both guides and the MIT license in the downloadable Python package.
+- Recording behavior is unchanged from 0.2.0.
+
 ## 0.2.0
 
 - Replace the current C# implementation with a Python standard-library implementation for Windows x64.
